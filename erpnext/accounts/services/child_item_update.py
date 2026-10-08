@@ -146,8 +146,19 @@ class ChildItemUpdater:
 			make_packing_list(parent)
 			parent.set_gross_profit()
 
+		# validate() does not run on an update_after_submit save, so the price
+		# ceilings it enforces have to be re-applied here explicitly. Passing
+		# `parent` is required: without it validate_approving_authority() cannot
+		# see the item rows, and the "Average Discount", "Customerwise Discount",
+		# "Itemwise Discount" and "Item Group wise Discount" rules silently pass.
+		if hasattr(parent, "validate_max_discount"):
+			parent.validate_max_discount()
+
+		if not parent.get("is_return") and not parent.is_negative_grand_total_allowed():
+			parent.validate_value("base_grand_total", ">=", 0)
+
 		frappe.get_cached_doc("Authorization Control").validate_approving_authority(
-			parent.doctype, parent.company, parent.base_grand_total
+			parent.doctype, parent.company, parent.base_grand_total, parent
 		)
 
 		if self.parent_doctype != "Supplier Quotation":
@@ -660,8 +671,14 @@ def update_child_item_rate_and_discount(
 		child_item.margin_type = ""
 		child_item.margin_rate_or_amount = 0
 		child_item.rate_with_margin = child_item.price_list_rate
-		child_item.discount_percentage = 0
 		child_item.discount_amount = flt(child_item.rate_with_margin) - flt(child_item.rate)
+		# Record the discount this rate actually grants. Zeroing it hid the
+		# discount from Item.max_discount, from the discount based Authorization
+		# Rules and from every discount report.
+		child_item.discount_percentage = flt(
+			child_item.discount_amount / flt(child_item.price_list_rate) * 100.0,
+			child_item.precision("discount_percentage"),
+		)
 
 
 def update_child_item_uom_and_weight(child_item, new_data) -> None:
